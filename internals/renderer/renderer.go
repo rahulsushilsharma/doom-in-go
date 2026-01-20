@@ -1,14 +1,27 @@
 package renderer
 
 import (
-	"fmt"
 	"log"
+	"os"
+	"time"
 
 	"github.com/gdamore/tcell/v3"
 	"github.com/gdamore/tcell/v3/color"
 )
 
+var FPS = 60
+
+func translateCoordinate(s tcell.Screen, x, y float64) (int, int) {
+	// -1, 1 => 0.. width/hight
+	width, height := s.Size()
+	xp := (x + 1) / 2 * float64(width)
+	yp := (1 - (y+1)/2) * float64(height)
+
+	return int(xp), int(yp)
+}
+
 func drawText(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, text string) {
+
 	row := y1
 	col := x1
 	var width int
@@ -29,7 +42,7 @@ func drawText(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, text string
 	}
 }
 
-func drawBox(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, text string) {
+func drawBox(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style) {
 	if y2 < y1 {
 		y1, y2 = y2, y1
 	}
@@ -37,37 +50,24 @@ func drawBox(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, text string)
 		x1, x2 = x2, x1
 	}
 
-	// Fill background
-	for row := y1; row <= y2; row++ {
-		for col := x1; col <= x2; col++ {
-			s.Put(col, row, " ", style)
-		}
-	}
-
-	// Draw borders
 	for col := x1; col <= x2; col++ {
 		s.Put(col, y1, string(tcell.RuneHLine), style)
 		s.Put(col, y2, string(tcell.RuneHLine), style)
 	}
 	for row := y1 + 1; row < y2; row++ {
 		s.Put(x1, row, string(tcell.RuneVLine), style)
-		s.Put(x2, row, string(tcell.RuneVLine), style)
+		s.Put(x2, row, string(tcell.RuneBullet), style)
 	}
 
-	// Only draw corners if necessary
-	if y1 != y2 && x1 != x2 {
-		s.Put(x1, y1, string(tcell.RuneULCorner), style)
-		s.Put(x2, y1, string(tcell.RuneURCorner), style)
-		s.Put(x1, y2, string(tcell.RuneLLCorner), style)
-		s.Put(x2, y2, string(tcell.RuneLRCorner), style)
-	}
-
-	drawText(s, x1+1, y1+1, x2-1, y2-1, style, text)
 }
 
+func drawPoint(s tcell.Screen, x, y int, style tcell.Style) {
+	s.Put(x, y, string(tcell.RuneBullet), style)
+
+}
 func Render() {
 	defStyle := tcell.StyleDefault.Background(color.Reset).Foreground(color.Reset)
-	boxStyle := tcell.StyleDefault.Foreground(color.White).Background(color.Purple)
+	boxStyle := tcell.StyleDefault.Foreground(color.Reset).Background(color.Reset)
 
 	// Initialize screen
 	s, err := tcell.NewScreen()
@@ -81,10 +81,6 @@ func Render() {
 	s.EnableMouse()
 	s.EnablePaste()
 	s.Clear()
-
-	// Draw initial boxes
-	drawBox(s, 1, 1, 42, 7, boxStyle, "Click and drag to draw a box")
-	drawBox(s, 5, 9, 32, 14, boxStyle, "Press C to reset")
 
 	quit := func() {
 		// You have to catch panics in a defer, clean up, and
@@ -109,12 +105,14 @@ func Render() {
 	// s.EventQ() <- tcell.NewEventKey(tcell.KeyRune, rune('a'), 0)
 
 	// Event loop
-	ox, oy := -1, -1
-	for {
-		// Update screen
-		s.Show()
+	go handleExit(s)
+	gameLoop(s, boxStyle)
 
-		// Poll event (this can be in a select statement as well)
+}
+
+func handleExit(s tcell.Screen) {
+	for {
+
 		ev := <-s.EventQ()
 
 		// Process event
@@ -123,28 +121,24 @@ func Render() {
 			s.Sync()
 		case *tcell.EventKey:
 			if ev.Key() == tcell.KeyEscape || ev.Key() == tcell.KeyCtrlC {
-				return
-			} else if ev.Key() == tcell.KeyCtrlL {
-				s.Sync()
-			} else if ev.Str() == "C" || ev.Str() == "c" {
 				s.Clear()
+				s.Fini()
+				os.Exit(0)
 			}
-		case *tcell.EventMouse:
-			x, y := ev.Position()
 
-			switch ev.Buttons() {
-			case tcell.Button1, tcell.Button2:
-				if ox < 0 {
-					ox, oy = x, y // record location when click started
-				}
-
-			case tcell.ButtonNone:
-				if ox >= 0 {
-					label := fmt.Sprintf("%d,%d to %d,%d", ox, oy, x, y)
-					drawBox(s, ox, oy, x, y, boxStyle, label)
-					ox, oy = -1, -1
-				}
-			}
 		}
+	}
+}
+func gameLoop(s tcell.Screen, style tcell.Style) {
+	x, y := 0.1, 0.1
+
+	for {
+
+		s.Show()
+		x1, y1 := translateCoordinate(s, x, y)
+		time.Sleep(time.Millisecond * time.Duration(FPS))
+
+		drawPoint(s, x1, y1, style)
+		x = x - 0.01
 	}
 }
