@@ -1,7 +1,7 @@
 package main
 
-import "fmt"
+import "doom-in-go/internals/renderer"
 
 func main() {
-	fmt.Println("hello world1")
+	renderer.Render()
 }
