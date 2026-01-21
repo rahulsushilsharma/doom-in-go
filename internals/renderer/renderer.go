@@ -2,6 +2,7 @@ package renderer
 
 import (
 	"log"
+	"math"
 	"os"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 )
 
 var FPS = 60
+var DELTATIME = 0.6
 
 func translateCoordinate(s tcell.Screen, x, y float64) (int, int) {
 	// -1, 1 => 0.. width/hight
@@ -67,7 +69,7 @@ func drawPoint(s tcell.Screen, x, y int, style tcell.Style) {
 }
 func Render() {
 	defStyle := tcell.StyleDefault.Background(color.Reset).Foreground(color.Reset)
-	boxStyle := tcell.StyleDefault.Foreground(color.Reset).Background(color.Reset)
+	boxStyle := tcell.StyleDefault.Foreground(color.Reset).Background(color.Blue)
 
 	// Initialize screen
 	s, err := tcell.NewScreen()
@@ -129,16 +131,109 @@ func handleExit(s tcell.Screen) {
 		}
 	}
 }
+
+func project(x, y, z float64) (float64, float64) {
+	if z == 0 {
+		z = 1
+	}
+	return x / z, y / z
+}
+
+func drawLine(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style) {
+	dx := float64(x2 - x1)
+	dy := float64(y2 - y1)
+
+	// Determine how many steps we need (DDA algorithm style)
+	steps := math.Abs(dx)
+	if math.Abs(dy) > steps {
+		steps = math.Abs(dy)
+	}
+
+	if steps == 0 {
+		s.Put(x1, y1, ".", style)
+		return
+	}
+
+	xInc := dx / steps
+	yInc := dy / steps
+
+	currentX := float64(x1)
+	currentY := float64(y1)
+
+	for i := 0; i <= int(steps); i++ {
+		s.Put(int(math.Round(currentX)), int(math.Round(currentY)), ".", style)
+		currentX += xInc
+		currentY += yInc
+	}
+}
+
+func drawCube(s tcell.Screen, edges [][]float64, style tcell.Style) {
+	connections := [][]int{
+		{0, 1}, {1, 2}, {2, 3}, {3, 0}, // Back face
+		{4, 5}, {5, 6}, {6, 7}, {7, 4}, // Front face
+		{0, 4}, {1, 5}, {2, 6}, {3, 7}, // Connecting struts
+	}
+
+	for _, conn := range connections {
+		v1, v2 := edges[conn[0]], edges[conn[1]]
+
+		px1, py1 := project(v1[0], v1[1], v1[2]+2.0)
+		px2, py2 := project(v2[0], v2[1], v2[2]+2.0)
+
+		x1, y1 := translateCoordinate(s, px1, py1)
+		x2, y2 := translateCoordinate(s, px2, py2)
+
+		drawLine(s, x1, y1, x2, y2, style)
+	}
+}
+
+func rotateXZ(point []float64, angle float64) []float64 {
+	x, y, z := point[0], point[1], point[2]
+	cos := math.Cos(angle)
+	sin := math.Sin(angle)
+
+	x1 := x*cos - z*sin
+	z1 := x*sin + z*cos
+	return []float64{x1, y, z1}
+}
+
+func rotatedCube(src [][]float64, angle float64) [][]float64 {
+	dst := make([][]float64, len(src))
+	for i := range src {
+		dst[i] = rotateXZ(src[i], angle)
+	}
+	return dst
+}
 func gameLoop(s tcell.Screen, style tcell.Style) {
+	frameDuration := time.Second / 60
 	x, y := 0.1, 0.1
+	cubeEdges := [][]float64{
+		{-0.5, -0.5, -0.5}, // 0
+		{0.5, -0.5, -0.5},  // 1
+		{0.5, 0.5, -0.5},   // 2
+		{-0.5, 0.5, -0.5},  // 3
 
+		{-0.5, -0.5, 0.5}, // 4
+		{0.5, -0.5, 0.5},  // 5
+		{0.5, 0.5, 0.5},   // 6
+		{-0.5, 0.5, 0.5},  // 7
+	}
+	angle := 0.05
 	for {
+		s.Clear()
 
-		s.Show()
 		x1, y1 := translateCoordinate(s, x, y)
-		time.Sleep(time.Millisecond * time.Duration(FPS))
+		drawLine(s, x1, y1, x1+5, y1+5, style)
 
 		drawPoint(s, x1, y1, style)
+		drawBox(s, x1, y1, x1+5, y1+5, style)
 		x = x - 0.01
+		angle = angle + 0.05
+		cube := rotatedCube(cubeEdges, angle)
+		drawCube(s, cube, style)
+
+		s.Show()
+		time.Sleep(frameDuration)
+
 	}
 }
