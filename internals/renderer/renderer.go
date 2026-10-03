@@ -13,17 +13,96 @@ import (
 var FPS = 60
 var DELTATIME = 0.6
 
+func GetBrailleChar(matrix [4][2]bool) rune {
+	var r rune = 0x2800
+	if matrix[0][0] {
+		r |= 0x01
+	} // Dot 1
+	if matrix[1][0] {
+		r |= 0x02
+	} // Dot 2
+	if matrix[2][0] {
+		r |= 0x04
+	} // Dot 3
+	if matrix[0][1] {
+		r |= 0x08
+	} // Dot 4
+	if matrix[1][1] {
+		r |= 0x10
+	} // Dot 5
+	if matrix[2][1] {
+		r |= 0x20
+	} // Dot 6
+	if matrix[3][0] {
+		r |= 0x40
+	} // Dot 7
+	if matrix[3][1] {
+		r |= 0x80
+	} // Dot 8
+	return r
+}
+
+// braillePixels is a flat pixel buffer at 2x terminal width, 4x terminal height.
+var braillePixels [][]bool
+var brailleW, brailleH int
+
+func initBrailleBuffer(s tcell.Screen) {
+	w, h := s.Size()
+	brailleW, brailleH = w*2, h*4
+	braillePixels = make([][]bool, brailleH)
+	for i := range braillePixels {
+		braillePixels[i] = make([]bool, brailleW)
+	}
+}
+
+func clearBraille() {
+	for y := range braillePixels {
+		for x := range braillePixels[y] {
+			braillePixels[y][x] = false
+		}
+	}
+}
+
+func setBraillePixel(x, y int) {
+	if x >= 0 && x < brailleW && y >= 0 && y < brailleH {
+		braillePixels[y][x] = true
+	}
+}
+
+func flushBraille(s tcell.Screen, style tcell.Style) {
+	termW := brailleW / 2
+	termH := brailleH / 4
+	for ty := 0; ty < termH; ty++ {
+		for tx := 0; tx < termW; tx++ {
+			var matrix [4][2]bool
+			for row := 0; row < 4; row++ {
+				for col := 0; col < 2; col++ {
+					matrix[row][col] = braillePixels[ty*4+row][tx*2+col]
+				}
+			}
+			ch := GetBrailleChar(matrix)
+			if ch != 0x2800 {
+				s.SetContent(tx, ty, ch, nil, style)
+			}
+		}
+	}
+}
+
 func translateCoordinate(s tcell.Screen, x, y float64) (int, int) {
-	// -1, 1 => 0.. width/hight
 	width, height := s.Size()
 	xp := (x + 1) / 2 * float64(width)
 	yp := (1 - (y+1)/2) * float64(height)
+	return int(xp), int(yp)
+}
 
+// translateCoordinateBraille maps normalized [-1,1] to braille pixel space.
+func translateCoordinateBraille(x, y float64) (int, int) {
+	xp := (x + 1) / 2 * float64(brailleW)
+	yp := (1 - (y+1)/2) * float64(brailleH)
 	return int(xp), int(yp)
 }
 
 func drawText(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, text string) {
-
 	row := y1
 	col := x1
 	var width int
@@ -38,7 +117,6 @@ func drawText(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, text string
 			break
 		}
 		if width == 0 {
-			// incomplete grapheme at end of string
 			break
 		}
 	}
@@ -60,18 +138,16 @@ func drawBox(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style) {
 		s.Put(x1, row, string(tcell.RuneVLine), style)
 		s.Put(x2, row, string(tcell.RuneBullet), style)
 	}
-
 }
 
 func drawPoint(s tcell.Screen, x, y int, style tcell.Style) {
 	s.Put(x, y, string(tcell.RuneBullet), style)
-
 }
+
 func Render() {
 	defStyle := tcell.StyleDefault.Background(color.Reset).Foreground(color.Reset)
-	boxStyle := tcell.StyleDefault.Foreground(color.Reset).Background(color.Blue)
+	boxStyle := tcell.StyleDefault.Foreground(color.Blue).Background(color.Reset)
 
-	// Initialize screen
 	s, err := tcell.NewScreen()
 	if err != nil {
 		log.Fatalf("%+v", err)
@@ -85,9 +161,6 @@ func Render() {
 	s.Clear()
 
 	quit := func() {
-		// You have to catch panics in a defer, clean up, and
-		// re-raise them - otherwise your application can
-		// die without leaving any diagnostic trace.
 		maybePanic := recover()
 		s.Fini()
 		if maybePanic != nil {
@@ -96,28 +169,15 @@ func Render() {
 	}
 	defer quit()
 
-	// Here's how to get the screen size when you need it.
-	// xmax, ymax := s.Size()
+	initBrailleBuffer(s)
 
-	// Here's an example of how to inject a keystroke where it will
-	// be picked up by a future read of the event queue.  Note that
-	// care should be used to avoid blocking writes to the queue if
-	// this is done from the same thread that is responsible for reading
-	// the queue, or else a single-party deadlock might occur.
-	// s.EventQ() <- tcell.NewEventKey(tcell.KeyRune, rune('a'), 0)
-
-	// Event loop
 	go handleExit(s)
 	gameLoop(s, boxStyle)
-
 }
 
 func handleExit(s tcell.Screen) {
 	for {
-
 		ev := <-s.EventQ()
-
-		// Process event
 		switch ev := ev.(type) {
 		case *tcell.EventResize:
 			s.Sync()
@@ -127,7 +187,6 @@ func handleExit(s tcell.Screen) {
 				s.Fini()
 				os.Exit(0)
 			}
-
 		}
 	}
 }
@@ -143,7 +202,6 @@ func drawLine(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style) {
 	dx := float64(x2 - x1)
 	dy := float64(y2 - y1)
 
-	// Determine how many steps we need (DDA algorithm style)
 	steps := math.Abs(dx)
 	if math.Abs(dy) > steps {
 		steps = math.Abs(dy)
@@ -167,6 +225,34 @@ func drawLine(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style) {
 	}
 }
 
+// drawLineBraille is like drawLine but writes into the braille pixel buffer.
+func drawLineBraille(x1, y1, x2, y2 int) {
+	dx := float64(x2 - x1)
+	dy := float64(y2 - y1)
+
+	steps := math.Abs(dx)
+	if math.Abs(dy) > steps {
+		steps = math.Abs(dy)
+	}
+
+	if steps == 0 {
+		setBraillePixel(x1, y1)
+		return
+	}
+
+	xInc := dx / steps
+	yInc := dy / steps
+
+	currentX := float64(x1)
+	currentY := float64(y1)
+
+	for i := 0; i <= int(steps); i++ {
+		setBraillePixel(int(math.Round(currentX)), int(math.Round(currentY)))
+		currentX += xInc
+		currentY += yInc
+	}
+}
+
 func drawCube(s tcell.Screen, edges [][]float64, style tcell.Style) {
 	connections := [][]int{
 		{0, 1}, {1, 2}, {2, 3}, {3, 0}, // Back face
@@ -180,10 +266,10 @@ func drawCube(s tcell.Screen, edges [][]float64, style tcell.Style) {
 		px1, py1 := project(v1[0], v1[1], v1[2]+2.0)
 		px2, py2 := project(v2[0], v2[1], v2[2]+2.0)
 
-		x1, y1 := translateCoordinate(s, px1, py1)
-		x2, y2 := translateCoordinate(s, px2, py2)
+		x1, y1 := translateCoordinateBraille(px1, py1)
+		x2, y2 := translateCoordinateBraille(px2, py2)
 
-		drawLine(s, x1, y1, x2, y2, style)
+		drawLineBraille(x1, y1, x2, y2)
 	}
 }
 
@@ -204,6 +290,7 @@ func rotatedCube(src [][]float64, angle float64) [][]float64 {
 	}
 	return dst
 }
+
 func gameLoop(s tcell.Screen, style tcell.Style) {
 	frameDuration := time.Second / 60
 	x, y := 0.1, 0.1
@@ -221,6 +308,7 @@ func gameLoop(s tcell.Screen, style tcell.Style) {
 	angle := 0.05
 	for {
 		s.Clear()
+		clearBraille()
 
 		x1, y1 := translateCoordinate(s, x, y)
 		drawLine(s, x1, y1, x1+5, y1+5, style)
@@ -231,9 +319,9 @@ func gameLoop(s tcell.Screen, style tcell.Style) {
 		angle = angle + 0.05
 		cube := rotatedCube(cubeEdges, angle)
 		drawCube(s, cube, style)
+		flushBraille(s, style)
 
 		s.Show()
 		time.Sleep(frameDuration)
-
 	}
 }
